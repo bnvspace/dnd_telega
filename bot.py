@@ -340,7 +340,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await refresh_main_message(update, context, store, state):
             return
 
-    await update.effective_message.reply_text(f"Положили в повозку: {item_text}")
+    # Silent success: main message is updated without extra chat noise.
 
 
 def pop_item(items: list[str], selector: str) -> str | None:
@@ -391,7 +391,7 @@ async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await refresh_main_message(update, context, store, state):
             return
 
-    await update.effective_message.reply_text(f"Достали из повозки: {removed}")
+    # Silent success: main message is updated without extra chat noise.
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -474,7 +474,6 @@ async def quick_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             store.save_chat_state(state)
             if not await refresh_main_message(update, context, store, state):
                 return
-            await update.effective_message.reply_text(f"Добавлено: {payload}")
             return
 
         if mode == "del" and payload:
@@ -487,7 +486,6 @@ async def quick_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             store.save_chat_state(state)
             if not await refresh_main_message(update, context, store, state):
                 return
-            await update.effective_message.reply_text(f"Удалено: {removed}")
             return
 
         if mode == "clear":
