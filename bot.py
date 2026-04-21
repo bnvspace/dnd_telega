@@ -25,6 +25,8 @@ LIST_NOT_CREATED_TEXT: Final[str] = (
     "Используйте /init, чтобы создать и закрепить основное сообщение."
 )
 HEADER_EMOJI_ID: Final[str] = "5226656353744862682"
+DEFAULT_LOOT_IMAGE_NAME: Final[str] = "телега.png"
+MAIN_CAPTION_LIMIT: Final[int] = 1024
 
 
 @dataclass
@@ -119,18 +121,34 @@ class MainMessageUnavailable(Exception):
     """Raised when main list message can no longer be edited."""
 
 
+class MainMessageNeedsRecreate(Exception):
+    """Raised when main message exists but must be recreated as a photo."""
+
+
+def resolve_loot_image_path() -> str:
+    configured = os.getenv("LOOT_IMAGE_PATH", "").strip()
+    if configured:
+        return configured
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_LOOT_IMAGE_NAME)
+
+
 def render_list(items: list[str]) -> str:
-    lines = [
-        f'<tg-emoji emoji-id="{HEADER_EMOJI_ID}">🛒</tg-emoji> <b>ОБЩАЯ ПОВОЗКА</b>',
-        "",
-    ]
+    lines = [f'<tg-emoji emoji-id="{HEADER_EMOJI_ID}">🛒</tg-emoji> <b>ОБЩАЯ ПОВОЗКА</b>', ""]
     if not items:
         lines.append("Список пуст.")
     else:
-        lines.extend(
-            f"{idx}. {html.escape(item)}" for idx, item in enumerate(items, start=1)
-        )
-    return "\n".join(lines)
+        for idx, item in enumerate(items, start=1):
+            candidate = f"{idx}. {html.escape(item)}"
+            preview = "\n".join([*lines, candidate])
+            if len(preview) > MAIN_CAPTION_LIMIT:
+                hidden = len(items) - idx + 1
+                lines.append(f"... и еще {hidden} поз.")
+                break
+            lines.append(candidate)
+    caption = "\n".join(lines)
+    if len(caption) <= MAIN_CAPTION_LIMIT:
+        return caption
+    return caption[: MAIN_CAPTION_LIMIT - 3] + "..."
 
 
 def get_store(context: ContextTypes.DEFAULT_TYPE) -> Store:
@@ -153,24 +171,48 @@ async def edit_main_message(
     if state.message_id is None:
         raise MainMessageUnavailable("message_id is empty")
 
-    text = render_list(state.items)
+    caption = render_list(state.items)
     try:
-        await context.bot.edit_message_text(
+        await context.bot.edit_message_caption(
             chat_id=state.chat_id,
             message_id=state.message_id,
-            text=text,
+            caption=caption,
             parse_mode="HTML",
-            disable_web_page_preview=True,
         )
     except BadRequest as exc:
         msg = str(exc).lower()
         if "message is not modified" in msg:
             return
+        if (
+            "there is no caption in the message to edit" in msg
+            or "message is not a media message" in msg
+            or "can't edit message caption" in msg
+        ):
+            raise MainMessageNeedsRecreate(str(exc)) from exc
         if "message to edit not found" in msg or "message can't be edited" in msg:
             raise MainMessageUnavailable(str(exc)) from exc
         raise
     except Forbidden as exc:
         raise MainMessageUnavailable(str(exc)) from exc
+
+
+async def create_main_message_with_photo(
+    context: ContextTypes.DEFAULT_TYPE,
+    state: ChatState,
+) -> None:
+    image_path = resolve_loot_image_path()
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(image_path)
+
+    caption = render_list(state.items)
+    with open(image_path, "rb") as image_file:
+        msg = await context.bot.send_photo(
+            chat_id=state.chat_id,
+            photo=image_file,
+            caption=caption,
+            parse_mode="HTML",
+        )
+    state.message_id = msg.message_id
 
 
 async def refresh_main_message(
@@ -181,6 +223,28 @@ async def refresh_main_message(
 ) -> bool:
     try:
         await edit_main_message(context, state)
+        return True
+    except MainMessageNeedsRecreate:
+        old_message_id = state.message_id
+        try:
+            await create_main_message_with_photo(context, state)
+        except FileNotFoundError:
+            if update.effective_message is not None:
+                await update.effective_message.reply_text(
+                    "Не найден файл изображения повозки. Положите `телега.png` рядом с bot.py."
+                )
+            return False
+        store.save_chat_state(state)
+        if old_message_id and old_message_id != state.message_id:
+            try:
+                await context.bot.delete_message(
+                    chat_id=state.chat_id,
+                    message_id=old_message_id,
+                )
+            except BadRequest:
+                pass
+            except Forbidden:
+                pass
         return True
     except MainMessageUnavailable:
         state.message_id = None
@@ -287,11 +351,11 @@ async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     async with lock:
         state = store.get_chat_state(chat_id)
-        text = render_list(state.items)
 
         if state.message_id is not None:
             try:
-                await edit_main_message(context, state)
+                if not await refresh_main_message(update, context, store, state):
+                    return
                 await update.effective_message.reply_text(
                     "Повозка уже существует и была обновлена."
                 )
@@ -299,13 +363,13 @@ async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             except MainMessageUnavailable:
                 state.message_id = None
 
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-        state.message_id = msg.message_id
+        try:
+            await create_main_message_with_photo(context, state)
+        except FileNotFoundError:
+            await update.effective_message.reply_text(
+                "Не найден файл изображения повозки. Положите `телега.png` рядом с bot.py."
+            )
+            return
         store.save_chat_state(state)
 
     await update.effective_message.reply_text(
