@@ -120,10 +120,8 @@ class MainMessageUnavailable(Exception):
 
 
 def render_list(items: list[str]) -> str:
-    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        f'<tg-emoji emoji-id="{HEADER_EMOJI_ID}"></tg-emoji> <b>ОБЩАЯ ПОВОЗКА</b>',
-        f"<i>Обновлено: {html.escape(updated_at)}</i>",
+        f'<tg-emoji emoji-id="{HEADER_EMOJI_ID}">🛒</tg-emoji> <b>ОБЩАЯ ПОВОЗКА</b>',
         "",
     ]
     if not items:
