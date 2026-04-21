@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -20,9 +21,10 @@ from telegram.ext import (
 from dotenv import load_dotenv
 
 LIST_NOT_CREATED_TEXT: Final[str] = (
-    "Тайник еще не создан.\n"
+    "Общая повозка еще не создана.\n"
     "Используйте /init, чтобы создать и закрепить основное сообщение."
 )
+HEADER_EMOJI_ID: Final[str] = "5226656353744862682"
 
 
 @dataclass
@@ -119,27 +121,17 @@ class MainMessageUnavailable(Exception):
 
 def render_list(items: list[str]) -> str:
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines = ["🎒 Тайник партии", f"Обновлено: {updated_at}", ""]
+    lines = [
+        f'<tg-emoji emoji-id="{HEADER_EMOJI_ID}"></tg-emoji> <b>ОБЩАЯ ПОВОЗКА</b>',
+        f"<i>Обновлено: {html.escape(updated_at)}</i>",
+        "",
+    ]
     if not items:
         lines.append("Список пуст.")
     else:
-        lines.extend(f"{idx}. {item}" for idx, item in enumerate(items, start=1))
-
-    lines.extend(
-        [
-            "",
-            "Команды:",
-            "/add <предмет> - положить в тайник",
-            "/del <номер|текст> - достать из тайника",
-            "/clear - очистить",
-            "/show - обновить сообщение",
-            "",
-            "Быстро (ответом на это сообщение):",
-            "+ веревка 15м",
-            "- 2",
-            "clear",
-        ]
-    )
+        lines.extend(
+            f"{idx}. {html.escape(item)}" for idx, item in enumerate(items, start=1)
+        )
     return "\n".join(lines)
 
 
@@ -169,6 +161,7 @@ async def edit_main_message(
             chat_id=state.chat_id,
             message_id=state.message_id,
             text=text,
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
     except BadRequest as exc:
@@ -238,8 +231,8 @@ async def help_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         "Команды:\n"
         "/init - создать или восстановить общее сообщение\n"
-        "/add <текст> - положить в тайник\n"
-        "/del <номер|текст> - достать из тайника\n"
+        "/add <текст> - положить в повозку\n"
+        "/del <номер|текст> - достать из повозки\n"
         "/clear - полностью очистить список\n"
         "/show - принудительно обновить отображение\n"
         "\n"
@@ -253,6 +246,34 @@ async def help_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         "- 3\n"
         "clear"
     )
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_chat is None:
+        return
+
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text(
+            "Инструкция по запуску общей повозки:\n"
+            "1. Добавьте бота в нужную группу.\n"
+            "2. Дайте боту право отправлять сообщения.\n"
+            "3. В группе выполните /init.\n"
+            "4. Закрепите созданное сообщение.\n"
+            "\n"
+            "Как пользоваться в группе:\n"
+            "- /add <предмет>\n"
+            "- /del <номер|текст>\n"
+            "- /clear\n"
+            "- /show\n"
+            "\n"
+            "Быстрый режим (reply на закреп):\n"
+            "+ веревка 15м\n"
+            "- 2\n"
+            "clear"
+        )
+        return
+
+    await help_command(update, context)
 
 
 async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -274,7 +295,7 @@ async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             try:
                 await edit_main_message(context, state)
                 await update.effective_message.reply_text(
-                    "Тайник уже существует и был обновлен."
+                    "Повозка уже существует и была обновлена."
                 )
                 return
             except MainMessageUnavailable:
@@ -283,13 +304,14 @@ async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         msg = await context.bot.send_message(
             chat_id=chat_id,
             text=text,
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
         state.message_id = msg.message_id
         store.save_chat_state(state)
 
     await update.effective_message.reply_text(
-        "Тайник создан. Закрепите это сообщение для постоянного использования."
+        "Повозка создана. Закрепите это сообщение для постоянного использования."
     )
 
 
@@ -320,7 +342,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await refresh_main_message(update, context, store, state):
             return
 
-    await update.effective_message.reply_text(f"Положили в тайник: {item_text}")
+    await update.effective_message.reply_text(f"Положили в повозку: {item_text}")
 
 
 def pop_item(items: list[str], selector: str) -> str | None:
@@ -371,7 +393,7 @@ async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await refresh_main_message(update, context, store, state):
             return
 
-    await update.effective_message.reply_text(f"Достали из тайника: {removed}")
+    await update.effective_message.reply_text(f"Достали из повозки: {removed}")
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -396,7 +418,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not await refresh_main_message(update, context, store, state):
             return
 
-    await update.effective_message.reply_text("Тайник очищен.")
+    await update.effective_message.reply_text("Повозка очищена.")
 
 
 async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -461,7 +483,7 @@ async def quick_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             removed = pop_item(state.items, payload)
             if removed is None:
                 await update.effective_message.reply_text(
-                    "Не нашел такой позиции в тайнике."
+                    "Не нашел такой позиции в повозке."
                 )
                 return
             store.save_chat_state(state)
@@ -475,7 +497,7 @@ async def quick_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             store.save_chat_state(state)
             if not await refresh_main_message(update, context, store, state):
                 return
-            await update.effective_message.reply_text("Тайник очищен.")
+            await update.effective_message.reply_text("Повозка очищена.")
             return
 
         if mode == "show":
@@ -493,7 +515,8 @@ def build_application(token: str, db_path: str) -> Application:
     app.bot_data["store"] = Store(db_path)
     app.bot_data["locks"] = ChatLockManager()
 
-    app.add_handler(CommandHandler(["start", "help"], help_command))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("init", init_command))
     app.add_handler(CommandHandler(["add", "put", "loot"], add_command))
     app.add_handler(CommandHandler(["del", "take", "drop", "rm"], del_command))
